@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexTech · Visor 3D Gestual</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+–bg: #09090f;
+–panel: #0f0f1a;
+–border: #1a1a2e;
+–accent: #00d4ff;
+–accent2: #ff6b00;
+–accent3: #00ff88;
+–text: #c8d0e0;
+–muted: #444860;
+}
+
+body {
+background: var(–bg);
+color: var(–text);
+font-family: ‘IBM Plex Mono’, monospace;
+height: 100vh;
+overflow: hidden;
+display: flex;
+flex-direction: column;
+}
+
+/* ── HEADER ── */
+header {
+display: flex;
+align-items: center;
+justify-content: space-between;
+padding: 12px 24px;
+border-bottom: 1px solid var(–border);
+background: var(–panel);
+flex-shrink: 0;
+z-index: 10;
+}
+
+.logo {
+font-family: ‘Bebas Neue’, sans-serif;
+font-size: 1.6rem;
+letter-spacing: 0.1em;
+color: var(–accent);
+text-shadow: 0 0 20px rgba(0,212,255,0.4);
+}
+
+.logo span { color: var(–text); }
+
+.header-right {
+display: flex;
+align-items: center;
+gap: 16px;
+}
+
+.badge {
+font-size: 0.6rem;
+letter-spacing: 0.15em;
+padding: 4px 10px;
+border-radius: 4px;
+border: 1px solid var(–border);
+color: var(–muted);
+text-transform: uppercase;
+}
+
+.badge.live {
+border-color: var(–accent3);
+color: var(–accent3);
+animation: badgePulse 2s infinite;
+}
+
+@keyframes badgePulse {
+0%,100% { opacity:1; } 50% { opacity:0.5; }
+}
+
+/* ── MAIN ── */
+main {
+flex: 1;
+display: grid;
+grid-template-columns: 1fr 260px;
+overflow: hidden;
+}
+
+/* ── 3D VIEWPORT ── */
+#viewport {
+position: relative;
+overflow: hidden;
+background: radial-gradient(ellipse at center, #0d0d20 0%, #09090f 70%);
+}
+
+#threeCanvas {
+width: 100% !important;
+height: 100% !important;
+display: block;
+}
+
+/* Grid overlay */
+#viewport::before {
+content: ‘’;
+position: absolute;
+inset: 0;
+background-image:
+linear-gradient(rgba(0,212,255,0.04) 1px, transparent 1px),
+linear-gradient(90deg, rgba(0,212,255,0.04) 1px, transparent 1px);
+background-size: 48px 48px;
+pointer-events: none;
+z-index: 1;
+}
+
+/* Corner brackets */
+.corner {
+position: absolute;
+width: 20px; height: 20px;
+z-index: 2;
+pointer-events: none;
+}
+.corner-tl { top:16px; left:16px; border-top:2px solid var(–accent); border-left:2px solid var(–accent); }
+.corner-tr { top:16px; right:16px; border-top:2px solid var(–accent); border-right:2px solid var(–accent); }
+.corner-bl { bottom:16px; left:16px; border-bottom:2px solid var(–accent); border-left:2px solid var(–accent); }
+.corner-br { bottom:16px; right:16px; border-bottom:2px solid var(–accent); border-right:2px solid var(–accent); }
+
+/* Gesture feedback overlay */
+#gestureOverlay {
+position: absolute;
+top: 16px;
+left: 50%;
+transform: translateX(-50%);
+z-index: 5;
+display: flex;
+flex-direction: column;
+align-items: center;
+gap: 8px;
+pointer-events: none;
+}
+
+#gestureTag {
+background: rgba(0,0,0,0.7);
+border: 1px solid var(–accent);
+border-radius: 4px;
+padding: 6px 16px;
+font-size: 0.65rem;
+letter-spacing: 0.15em;
+color: var(–accent);
+text-transform: uppercase;
+opacity: 0;
+transition: opacity 0.2s;
+white-space: nowrap;
+}
+
+#gestureTag.show { opacity: 1; }
+
+/* Hand cursor on 3D scene */
+#handCursor {
+position: absolute;
+width: 16px; height: 16px;
+border: 2px solid var(–accent);
+border-radius: 50%;
+background: rgba(0,212,255,0.2);
+box-shadow: 0 0 12px rgba(0,212,255,0.6);
+transform: translate(-50%,-50%);
+pointer-events: none;
+z-index: 4;
+left: -50px; top: -50px;
+transition: width 0.1s, height 0.1s, background 0.1s;
+}
+
+#handCursor.rotate { border-color: var(–accent2); background: rgba(255,107,0,0.2); box-shadow: 0 0 12px rgba(255,107,0,0.6); }
+#handCursor.zoom-cur { border-color: var(–accent3); background: rgba(0,255,136,0.2); box-shadow: 0 0 12px rgba(0,255,136,0.6); width:24px; height:24px; }
+#handCursor.explode-cur { border-color: #ff3366; background: rgba(255,51,102,0.2); box-shadow: 0 0 16px rgba(255,51,102,0.8); width:28px; height:28px; }
+
+/* Part info */
+#partInfo {
+position: absolute;
+bottom: 20px;
+left: 50%;
+transform: translateX(-50%);
+z-index: 5;
+text-align: center;
+pointer-events: none;
+}
+
+.part-name {
+font-family: ‘Bebas Neue’, sans-serif;
+font-size: 1.4rem;
+letter-spacing: 0.1em;
+color: var(–text);
+opacity: 0.4;
+}
+
+.part-spec {
+font-size: 0.6rem;
+color: var(–muted);
+letter-spacing: 0.1em;
+margin-top: 2px;
+}
+
+/* Rotation indicator ring */
+#rotIndicator {
+position: absolute;
+bottom: 70px;
+left: 50%;
+transform: translateX(-50%);
+width: 60px; height: 60px;
+border: 1px solid rgba(0,212,255,0.15);
+border-radius: 50%;
+z-index: 5;
+pointer-events: none;
+display: flex;
+align-items: center;
+justify-content: center;
+}
+
+.rot-arrow {
+font-size: 0.6rem;
+color: var(–muted);
+position: absolute;
+}
+
+/* ── SIDE PANEL ── */
+.side-panel {
+background: var(–panel);
+border-left: 1px solid var(–border);
+display: flex;
+flex-direction: column;
+overflow: hidden;
+}
+
+.panel-block {
+padding: 16px;
+border-bottom: 1px solid var(–border);
+}
+
+.block-title {
+font-size: 0.55rem;
+letter-spacing: 0.2em;
+color: var(–muted);
+text-transform: uppercase;
+margin-bottom: 12px;
+}
+
+/* Cam feed */
+#camWrap {
+position: relative;
+border-radius: 8px;
+overflow: hidden;
+background: #000;
+aspect-ratio: 4/3;
+}
+
+#videoEl { display: none; }
+
+#camCanvas {
+width: 100%; height: 100%;
+display: block;
+transform: scaleX(-1);
+}
+
+#camChip {
+position: absolute;
+bottom: 6px; left: 50%;
+transform: translateX(-50%);
+background: rgba(0,0,0,0.8);
+color: var(–accent);
+font-size: 0.55rem;
+padding: 2px 8px;
+border-radius: 3px;
+letter-spacing: 0.1em;
+white-space: nowrap;
+opacity: 0;
+transition: opacity 0.2s;
+}
+
+#camChip.show { opacity:1; }
+
+/* Status dots */
+.status-row {
+display: flex;
+align-items: center;
+gap: 8px;
+margin-bottom: 6px;
+font-size: 0.65rem;
+color: var(–muted);
+}
+
+.sdot {
+width: 6px; height: 6px;
+border-radius: 50%;
+background: #333;
+flex-shrink: 0;
+}
+.sdot.on { background: var(–accent3); box-shadow: 0 0 6px var(–accent3); }
+.sdot.warn { background: var(–accent2); box-shadow: 0 0 6px var(–accent2); }
+
+/* Gesture guide */
+.gest-list { display: flex; flex-direction: column; gap: 6px; }
+
+.gest-row {
+display: flex;
+align-items: center;
+gap: 10px;
+padding: 7px 10px;
+border-radius: 6px;
+border: 1px solid var(–border);
+font-size: 0.62rem;
+color: var(–muted);
+transition: all 0.2s;
+}
+
+.gest-row.active {
+border-color: var(–accent);
+color: var(–text);
+background: rgba(0,212,255,0.05);
+}
+
+.gest-row.active.orange { border-color: var(–accent2); background: rgba(255,107,0,0.05); }
+.gest-row.active.green { border-color: var(–accent3); background: rgba(0,255,136,0.05); }
+.gest-row.active.red { border-color: #ff3366; background: rgba(255,51,102,0.05); }
+
+.gest-icon { font-size: 1.1rem; width: 22px; text-align: center; }
+
+/* Stats */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.stat-box {
+background: rgba(255,255,255,0.02);
+border: 1px solid var(–border);
+border-radius: 6px;
+padding: 10px;
+}
+
+.stat-label { font-size: 0.5rem; letter-spacing: 0.12em; color: var(–muted); text-transform: uppercase; margin-bottom: 4px; }
+.stat-val { font-size: 0.9rem; color: var(–accent); font-weight: 500; }
+
+/* Parts selector */
+.parts-row {
+display: flex;
+gap: 6px;
+}
+
+.part-btn {
+flex: 1;
+padding: 8px 4px;
+border-radius: 6px;
+border: 1px solid var(–border);
+background: transparent;
+color: var(–muted);
+font-family: ‘IBM Plex Mono’, monospace;
+font-size: 0.58rem;
+cursor: pointer;
+transition: all 0.2s;
+text-align: center;
+letter-spacing: 0.05em;
+}
+
+.part-btn:hover, .part-btn.selected {
+border-color: var(–accent);
+color: var(–accent);
+background: rgba(0,212,255,0.06);
+}
+
+/* Start overlay */
+#startOverlay {
+position: fixed; inset: 0;
+background: var(–bg);
+z-index: 100;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+gap: 20px;
+}
+
+.s-logo {
+font-family: ‘Bebas Neue’, sans-serif;
+font-size: clamp(3rem, 10vw, 7rem);
+letter-spacing: 0.08em;
+color: var(–accent);
+text-shadow: 0 0 40px rgba(0,212,255,0.3);
+line-height: 1;
+text-align: center;
+}
+
+.s-logo small {
+display: block;
+font-size: 0.25em;
+letter-spacing: 0.3em;
+color: var(–muted);
+}
+
+.s-gestures {
+display: flex;
+gap: 12px;
+flex-wrap: wrap;
+justify-content: center;
+max-width: 500px;
+}
+
+.sg {
+background: var(–panel);
+border: 1px solid var(–border);
+border-radius: 8px;
+padding: 10px 14px;
+text-align: center;
+font-size: 0.6rem;
+color: var(–muted);
+letter-spacing: 0.08em;
+}
+
+.sg span { display:block; font-size:1.6rem; margin-bottom:4px; }
+.sg b { color: var(–text); }
+
+.s-btn {
+padding: 14px 40px;
+background: transparent;
+border: 1px solid var(–accent);
+color: var(–accent);
+font-family: ‘IBM Plex Mono’, monospace;
+font-size: 0.8rem;
+letter-spacing: 0.1em;
+border-radius: 4px;
+cursor: pointer;
+transition: all 0.3s;
+box-shadow: 0 0 20px rgba(0,212,255,0.2);
+}
+
+.s-btn:hover {
+background: var(–accent);
+color: var(–bg);
+box-shadow: 0 0 40px rgba(0,212,255,0.5);
+}
+</style>
+
+</head>
+<body>
+
+<!-- Start overlay -->
+
+<div id="startOverlay">
+  <div class="s-logo">
+    NexTech<small>Visor Industrial 3D</small>
+  </div>
+  <div class="s-gestures">
+    <div class="sg"><span>🖐️</span><b>Mano abierta</b><br>Rotar pieza</div>
+    <div class="sg"><span>✌️</span><b>Índice + medio</b><br>Zoom</div>
+    <div class="sg"><span>☝️</span><b>Solo índice</b><br>Luz direccional</div>
+    <div class="sg"><span>✊</span><b>Puño</b><br>Explotar piezas</div>
+  </div>
+  <button class="s-btn" onclick="init()">▶ INICIAR VISOR</button>
+</div>
+
+<header>
+  <div class="logo">Nex<span>Tech</span> <span style="font-size:0.9rem;color:var(--muted)">·</span> Visor 3D</div>
+  <div class="header-right">
+    <div class="badge live" id="handBadge">SIN MANO</div>
+    <div class="badge" id="gestureBadge">GESTOS INACTIVOS</div>
+  </div>
+</header>
+
+<main>
+  <!-- 3D Viewport -->
+  <div id="viewport">
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+```
+<canvas id="threeCanvas"></canvas>
+
+<div id="handCursor"></div>
+
+<div id="gestureOverlay">
+  <div id="gestureTag"></div>
+</div>
+
+<div id="partInfo">
+  <div class="part-name" id="partName">ÁRBOL DE TRANSMISIÓN</div>
+  <div class="part-spec" id="partSpec">ACERO 4140 · Ø48mm × 320mm · NexTech P/N-2041</div>
+</div>
+```
+
+  </div>
+
+  <!-- Side panel -->
+
+  <aside class="side-panel">
+
+```
+<div class="panel-block">
+  <div class="block-title">Cámara / Detección</div>
+  <div id="camWrap">
+    <video id="videoEl" autoplay playsinline muted></video>
+    <canvas id="camCanvas"></canvas>
+    <div id="camChip"></div>
+  </div>
+  <div style="margin-top:10px">
+    <div class="status-row"><div class="sdot" id="d-cam"></div><span id="t-cam">Cámara inactiva</span></div>
+    <div class="status-row"><div class="sdot" id="d-hand"></div><span id="t-hand">Sin mano detectada</span></div>
+  </div>
+</div>
+
+<div class="panel-block">
+  <div class="block-title">Gestos</div>
+  <div class="gest-list">
+    <div class="gest-row" id="g-open"><div class="gest-icon">🖐️</div>Rotar modelo</div>
+    <div class="gest-row" id="g-peace"><div class="gest-icon">✌️</div>Zoom in/out</div>
+    <div class="gest-row" id="g-point"><div class="gest-icon">☝️</div>Luz direccional</div>
+    <div class="gest-row" id="g-fist"><div class="gest-icon">✊</div>Explotar ensamble</div>
+  </div>
+</div>
+
+<div class="panel-block">
+  <div class="block-title">Parámetros</div>
+  <div class="stat-grid">
+    <div class="stat-box"><div class="stat-label">Rot X</div><div class="stat-val" id="sv-rx">0°</div></div>
+    <div class="stat-box"><div class="stat-label">Rot Y</div><div class="stat-val" id="sv-ry">0°</div></div>
+    <div class="stat-box"><div class="stat-label">Zoom</div><div class="stat-val" id="sv-zoom">1.0×</div></div>
+    <div class="stat-box"><div class="stat-label">Explode</div><div class="stat-val" id="sv-exp">0%</div></div>
+  </div>
+</div>
+
+<div class="panel-block">
+  <div class="block-title">Pieza</div>
+  <div class="parts-row">
+    <button class="part-btn selected" id="pb-shaft" onclick="selectPart('shaft',this)">ÁRBOL</button>
+    <button class="part-btn" id="pb-gear" onclick="selectPart('gear',this)">ENGRANE</button>
+    <button class="part-btn" id="pb-bracket" onclick="selectPart('bracket',this)">SOPORTE</button>
+  </div>
+</div>
+```
+
+  </aside>
+</main>
+
+<video id="videoEl2" style="display:none" autoplay playsinline muted></video>
+
+<script>
+// ── THREE.JS SETUP ────────────────────────────────────
+let scene, camera, renderer, modelGroup, parts = [];
+let rotX = 0, rotY = 0, camZ = 5;
+let explodeFactor = 0, targetExplode = 0;
+let lightTarget = { x: 0, y: 0 };
+let dirLight;
+let currentPart = 'shaft';
+
+function initThree() {
+  const canvas = document.getElementById('threeCanvas');
+  const vp = document.getElementById('viewport');
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x09090f, 0.05);
+
+  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.set(0, 0, camZ);
+
+  // Lights
+  const ambient = new THREE.AmbientLight(0x223355, 0.8);
+  scene.add(ambient);
+
+  dirLight = new THREE.DirectionalLight(0x00d4ff, 2.5);
+  dirLight.position.set(3, 4, 3);
+  dirLight.castShadow = true;
+  scene.add(dirLight);
+
+  const rimLight = new THREE.DirectionalLight(0xff6b00, 0.8);
+  rimLight.position.set(-3, -1, -2);
+  scene.add(rimLight);
+
+  const fillLight = new THREE.PointLight(0x0044ff, 0.5, 20);
+  fillLight.position.set(0, -3, 2);
+  scene.add(fillLight);
+
+  // Build model
+  buildShaft();
+
+  // Grid floor
+  const gridHelper = new THREE.GridHelper(10, 20, 0x1a1a2e, 0x1a1a2e);
+  gridHelper.position.y = -1.8;
+  scene.add(gridHelper);
+
+  resizeRenderer();
+  window.addEventListener('resize', resizeRenderer);
+  animate();
+}
+
+function resizeRenderer() {
+  const vp = document.getElementById('viewport');
+  const w = vp.clientWidth, h = vp.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+// ── MATERIALS ─────────────────────────────────────────
+function metalMat(color = 0x8899aa, roughness = 0.3, metalness = 0.9) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+// ── BUILD SHAFT (Árbol de transmisión) ────────────────
+function buildShaft() {
+  clearModel();
+  parts = [];
+  modelGroup = new THREE.Group();
+
+  // Main shaft body
+  const shaftGeo = new THREE.CylinderGeometry(0.18, 0.18, 2.4, 32);
+  const shaft = new THREE.Mesh(shaftGeo, metalMat(0x9aaabb, 0.2, 0.95));
+  shaft.castShadow = true;
+  shaft.userData = { basePos: new THREE.Vector3(0, 0, 0), explodeDir: new THREE.Vector3(0, 0, 0) };
+  modelGroup.add(shaft);
+  parts.push(shaft);
+
+  // Shoulder 1
+  const s1 = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.12, 32), metalMat(0x889aab));
+  s1.position.set(0, 0.7, 0);
+  s1.userData = { basePos: new THREE.Vector3(0, 0.7, 0), explodeDir: new THREE.Vector3(0, 0.4, 0) };
+  modelGroup.add(s1); parts.push(s1);
+
+  // Shoulder 2
+  const s2 = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.12, 32), metalMat(0x889aab));
+  s2.position.set(0, -0.7, 0);
+  s2.userData = { basePos: new THREE.Vector3(0, -0.7, 0), explodeDir: new THREE.Vector3(0, -0.4, 0) };
+  modelGroup.add(s2); parts.push(s2);
+
+  // Bearing journal 1
+  const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.35, 32), metalMat(0xaabbcc, 0.1, 1.0));
+  b1.position.set(0, 0.95, 0);
+  b1.userData = { basePos: new THREE.Vector3(0, 0.95, 0), explodeDir: new THREE.Vector3(0, 0.8, 0) };
+  modelGroup.add(b1); parts.push(b1);
+
+  // Bearing journal 2
+  const b2 = b1.clone();
+  b2.position.set(0, -0.95, 0);
+  b2.userData = { basePos: new THREE.Vector3(0, -0.95, 0), explodeDir: new THREE.Vector3(0, -0.8, 0) };
+  modelGroup.add(b2); parts.push(b2);
+
+  // Keyway slot (flat on cylinder — simulated with box cutout look)
+  const key = new THREE.Mesh(
+    new THREE.BoxGeometry(0.07, 0.3, 0.36),
+    metalMat(0x334455, 0.6, 0.5)
+  );
+  key.position.set(0.19, 0.2, 0);
+  key.userData = { basePos: new THREE.Vector3(0.19, 0.2, 0), explodeDir: new THREE.Vector3(0.6, 0.2, 0) };
+  modelGroup.add(key); parts.push(key);
+
+  // End caps
+  const ec1 = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.08, 32), metalMat(0x778899));
+  ec1.position.set(0, 1.24, 0);
+  ec1.userData = { basePos: new THREE.Vector3(0, 1.24, 0), explodeDir: new THREE.Vector3(0, 1.2, 0) };
+  modelGroup.add(ec1); parts.push(ec1);
+
+  const ec2 = ec1.clone();
+  ec2.position.set(0, -1.24, 0);
+  ec2.userData = { basePos: new THREE.Vector3(0, -1.24, 0), explodeDir: new THREE.Vector3(0, -1.2, 0) };
+  modelGroup.add(ec2); parts.push(ec2);
+
+  // Thread detail at top
+  for (let i = 0; i < 5; i++) {
+    const thread = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.015, 8, 24),
+      metalMat(0x667788, 0.4, 0.8)
+    );
+    thread.position.set(0, 1.1 + i * 0.06, 0);
+    thread.rotation.x = Math.PI / 2;
+    thread.userData = { basePos: new THREE.Vector3(0, 1.1 + i * 0.06, 0), explodeDir: new THREE.Vector3(0, 1.5, 0) };
+    modelGroup.add(thread); parts.push(thread);
+  }
+
+  modelGroup.rotation.x = 0.3;
+  scene.add(modelGroup);
+
+  document.getElementById('partName').textContent = 'ÁRBOL DE TRANSMISIÓN';
+  document.getElementById('partSpec').textContent = 'ACERO 4140 · Ø48mm × 320mm · NexTech P/N-2041';
+}
+
+// ── BUILD GEAR (Engrane) ──────────────────────────────
+function buildGear() {
+  clearModel();
+  parts = [];
+  modelGroup = new THREE.Group();
+
+  // Hub
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.4, 32), metalMat(0x8899bb, 0.25, 0.9));
+  hub.userData = { basePos: new THREE.Vector3(0,0,0), explodeDir: new THREE.Vector3(0,0,0) };
+  modelGroup.add(hub); parts.push(hub);
+
+  // Bore
+  const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.45, 24), metalMat(0x223344, 0.7, 0.3));
+  bore.userData = { basePos: new THREE.Vector3(0,0,0), explodeDir: new THREE.Vector3(0,0,0) };
+  modelGroup.add(bore); parts.push(bore);
+
+  // Teeth
+  const toothCount = 18;
+  for (let i = 0; i < toothCount; i++) {
+    const angle = (i / toothCount) * Math.PI * 2;
+    const tooth = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.4, 0.18),
+      metalMat(0x7799bb, 0.2, 0.95)
+    );
+    tooth.position.set(Math.cos(angle) * 0.5, 0, Math.sin(angle) * 0.5);
+    tooth.rotation.y = -angle;
+    const explodeR = 0.4;
+    tooth.userData = { basePos: tooth.position.clone(), explodeDir: new THREE.Vector3(Math.cos(angle)*explodeR, 0, Math.sin(angle)*explodeR) };
+    modelGroup.add(tooth); parts.push(tooth);
+  }
+
+  // Web spokes
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2;
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.28), metalMat(0x6688aa));
+    spoke.position.set(Math.cos(angle) * 0.22, 0, Math.sin(angle) * 0.22);
+    spoke.rotation.y = -angle;
+    spoke.userData = { basePos: spoke.position.clone(), explodeDir: new THREE.Vector3(Math.cos(angle)*0.3, 0.5, Math.sin(angle)*0.3) };
+    modelGroup.add(spoke); parts.push(spoke);
+  }
+
+  modelGroup.rotation.x = 0.4;
+  scene.add(modelGroup);
+
+  document.getElementById('partName').textContent = 'ENGRANE HELICOIDAL';
+  document.getElementById('partSpec').textContent = 'ACERO 8620 · Módulo 2 · Z=18 · NexTech P/N-3072';
+}
+
+// ── BUILD BRACKET (Soporte) ───────────────────────────
+function buildBracket() {
+  clearModel();
+  parts = [];
+  modelGroup = new THREE.Group();
+
+  const mat = metalMat(0x99aabb, 0.35, 0.7);
+
+  // Base plate
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.12, 1.2), mat);
+  base.position.y = -0.6;
+  base.userData = { basePos: base.position.clone(), explodeDir: new THREE.Vector3(0,-0.5,0) };
+  modelGroup.add(base); parts.push(base);
+
+  // Vertical plate
+  const vert = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.2, 1.2), metalMat(0x8899aa));
+  vert.position.set(-0.84, 0, 0);
+  vert.userData = { basePos: vert.position.clone(), explodeDir: new THREE.Vector3(-0.6, 0, 0) };
+  modelGroup.add(vert); parts.push(vert);
+
+  // Gusset
+  const geoG = new THREE.BufferGeometry();
+  const verts = new Float32Array([
+    0,0,0.55,  0,0,-0.55,  -0.6,-0.6,0.55,
+    0,0,-0.55, -0.6,-0.6,-0.55, -0.6,-0.6,0.55
+  ]);
+  geoG.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  geoG.computeVertexNormals();
+  const gusset = new THREE.Mesh(geoG, metalMat(0x778899, 0.4, 0.6));
+  gusset.position.set(-0.78, -0.02, 0);
+  gusset.userData = { basePos: gusset.position.clone(), explodeDir: new THREE.Vector3(-0.4, 0.4, 0) };
+  modelGroup.add(gusset); parts.push(gusset);
+
+  // Bolt holes (cylinders)
+  const holeMat = metalMat(0x223344, 0.8, 0.2);
+  const holePositions = [[-0.6,-0.6,0.4],[-0.6,-0.6,-0.4],[0.6,-0.6,0.4],[0.6,-0.6,-0.4]];
+  holePositions.forEach(([x,y,z]) => {
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,0.14,16), holeMat);
+    h.position.set(x,y,z);
+    h.userData = { basePos: h.position.clone(), explodeDir: new THREE.Vector3(x*0.3, -0.8, z*0.3) };
+    modelGroup.add(h); parts.push(h);
+  });
+
+  // Bearing housing
+  const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.5, 32), metalMat(0xaabbcc, 0.2, 0.9));
+  housing.rotation.z = Math.PI/2;
+  housing.position.set(-0.84, 0.25, 0);
+  housing.userData = { basePos: housing.position.clone(), explodeDir: new THREE.Vector3(-0.8, 0.6, 0) };
+  modelGroup.add(housing); parts.push(housing);
+
+  const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,0.55,24), metalMat(0x223344, 0.7, 0.3));
+  bore.rotation.z = Math.PI/2;
+  bore.position.set(-0.84, 0.25, 0);
+  bore.userData = { basePos: bore.position.clone(), explodeDir: new THREE.Vector3(-0.8,0.6,0) };
+  modelGroup.add(bore); parts.push(bore);
+
+  modelGroup.rotation.x = 0.3;
+  modelGroup.rotation.y = 0.4;
+  scene.add(modelGroup);
+
+  document.getElementById('partName').textContent = 'SOPORTE DE COJINETE';
+  document.getElementById('partSpec').textContent = 'HIERRO GRIS FC-250 · NexTech P/N-1018';
+}
+
+function clearModel() {
+  if (modelGroup) {
+    scene.remove(modelGroup);
+    modelGroup.traverse(c => { if(c.geometry) c.geometry.dispose(); if(c.material) c.material.dispose(); });
+  }
+}
+
+// ── ANIMATE ───────────────────────────────────────────
+let autoRotate = true;
+let autoRotSpeed = 0.004;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (modelGroup) {
+    // Auto-rotate when no hand
+    if (autoRotate) modelGroup.rotation.y += autoRotSpeed;
+
+    // Apply gesture rotation
+    modelGroup.rotation.y += (targetRotY - modelGroup.rotation.y) * 0.12;
+    modelGroup.rotation.x += (targetRotX - modelGroup.rotation.x) * 0.12;
+
+    // Explode
+    explodeFactor += (targetExplode - explodeFactor) * 0.08;
+    parts.forEach(p => {
+      if (p.userData.explodeDir) {
+        p.position.x = p.userData.basePos.x + p.userData.explodeDir.x * explodeFactor;
+        p.position.y = p.userData.basePos.y + p.userData.explodeDir.y * explodeFactor;
+        p.position.z = p.userData.basePos.z + p.userData.explodeDir.z * explodeFactor;
+      }
+    });
+
+    // Light direction
+    dirLight.position.x += (lightTarget.x * 5 - dirLight.position.x) * 0.05;
+    dirLight.position.y += (lightTarget.y * 5 - dirLight.position.y) * 0.05;
+  }
+
+  // Camera zoom
+  camera.position.z += (camZ - camera.position.z) * 0.1;
+
+  // Update stats
+  document.getElementById('sv-rx').textContent = (modelGroup ? (modelGroup.rotation.x * 180/Math.PI).toFixed(0) : 0) + '°';
+  document.getElementById('sv-ry').textContent = (modelGroup ? (modelGroup.rotation.y * 180/Math.PI % 360).toFixed(0) : 0) + '°';
+  document.getElementById('sv-zoom').textContent = (5/camZ).toFixed(1) + '×';
+  document.getElementById('sv-exp').textContent = Math.round(explodeFactor * 100) + '%';
+
+  renderer.render(scene, camera);
+}
+
+let targetRotX = 0.3, targetRotY = 0;
+
+// ── MEDIAPIPE ─────────────────────────────────────────
+let handsDetector;
+const videoEl = document.getElementById('videoEl');
+const camCanvas = document.getElementById('camCanvas');
+const camCtx = camCanvas.getContext('2d');
+
+async function init() {
+  document.getElementById('startOverlay').style.display = 'none';
+  initThree();
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user', width:640, height:480 } });
+    videoEl.srcObject = stream;
+    await new Promise(r => videoEl.onloadedmetadata = r);
+    videoEl.play();
+
+    document.getElementById('d-cam').classList.add('on');
+    document.getElementById('t-cam').textContent = 'Cámara activa';
+
+    handsDetector = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+    });
+    handsDetector.setOptions({ maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.5 });
+    handsDetector.onResults(onResults);
+    frameLoop();
+  } catch(e) {
+    alert('Error cámara: ' + e.message);
+  }
+}
+
+async function frameLoop() {
+  if (videoEl.readyState >= 2) {
+    camCanvas.width = videoEl.videoWidth;
+    camCanvas.height = videoEl.videoHeight;
+    await handsDetector.send({ image: videoEl });
+  }
+  requestAnimationFrame(frameLoop);
+}
+
+// ── GESTURE STATE ─────────────────────────────────────
+let lastHandX = null, lastHandY_cam = null;
+let gestureFrames = 0;
+let stableGesture = 'none';
+
+function onResults(results) {
+  camCtx.clearRect(0,0,camCanvas.width,camCanvas.height);
+  camCtx.drawImage(videoEl,0,0,camCanvas.width,camCanvas.height);
+
+  if (!results.multiHandLandmarks?.length) {
+    document.getElementById('d-hand').classList.remove('on');
+    document.getElementById('t-hand').textContent = 'Sin mano detectada';
+    document.getElementById('handBadge').textContent = 'SIN MANO';
+    autoRotate = true;
+    clearGestCards();
+    hideCursor();
+    lastHandX = null; lastHandY_cam = null;
+    stableGesture = 'none';
+    return;
+  }
+
+  document.getElementById('d-hand').classList.add('on');
+  document.getElementById('t-hand').textContent = 'Mano detectada';
+  document.getElementById('handBadge').textContent = 'MANO ACTIVA';
+  autoRotate = false;
+
+  const lms = results.multiHandLandmarks[0];
+  drawCamLandmarks(lms);
+
+  const raw = detectGesture(lms);
+  // Debounce gesture: require 3 consistent frames
+  if (raw === stableGesture) {
+    gestureFrames = Math.min(gestureFrames + 1, 10);
+  } else {
+    gestureFrames = 0;
+    stableGesture = raw;
+  }
+
+  applyGesture(stableGesture, lms);
+}
+
+function isUp(lms, tip, pip) { return lms[tip].y < lms[pip].y - 0.025; }
+
+function detectGesture(lms) {
+  const idx = isUp(lms, 8, 6);
+  const mid = isUp(lms, 12, 10);
+  const rng = isUp(lms, 16, 14);
+  const pnk = isUp(lms, 20, 18);
+  if (idx && mid && rng && pnk) return 'open';
+  if (!idx && !mid && !rng && !pnk) return 'fist';
+  if (idx && mid && !rng && !pnk) return 'peace';
+  if (idx && !mid && !rng && !pnk) return 'point';
+  return 'none';
+}
+
+function applyGesture(gesture, lms) {
+  const vp = document.getElementById('viewport');
+  const W = vp.clientWidth, H = vp.clientHeight;
+
+  // Index tip position mirrored
+  const ix = (1 - lms[8].x) * W;
+  const iy = lms[8].y * H;
+  // Wrist position
+  const wx = (1 - lms[0].x);
+  const wy = lms[0].y;
+
+  moveCursor(ix, iy, gesture);
+  updateGestureUI(gesture);
+
+  // 🖐️ OPEN — rotate
+  if (gesture === 'open') {
+    if (lastHandX !== null) {
+      const dx = wx - lastHandX;
+      const dy = wy - lastHandY_cam;
+      targetRotY += dx * 6;
+      targetRotX += dy * 4;
+      targetRotX = Math.max(-1.2, Math.min(1.2, targetRotX));
+    }
+    lastHandX = wx; lastHandY_cam = wy;
+  }
+
+  // ✌️ PEACE — zoom
+  if (gesture === 'peace') {
+    // wrist Y controls zoom: high = zoom in, low = zoom out
+    const targetZ = 2.5 + wy * 5;
+    camZ = Math.max(2.5, Math.min(8, targetZ));
+    lastHandX = null;
+  }
+
+  // ☝️ POINT — directional light
+  if (gesture === 'point') {
+    lightTarget.x = (1 - lms[8].x) * 2 - 1; // -1 to 1
+    lightTarget.y = -(lms[8].y * 2 - 1);
+    lastHandX = null;
+  }
+
+  // ✊ FIST — explode
+  if (gesture === 'fist') {
+    targetExplode = Math.min(targetExplode + 0.015, 1.0);
+    lastHandX = null;
+  } else {
+    if (gesture !== 'fist') targetExplode = Math.max(targetExplode - 0.02, 0);
+  }
+
+  if (gesture === 'none') { lastHandX = null; lastHandY_cam = null; }
+}
+
+// ── CURSOR ON VIEWPORT ────────────────────────────────
+let cSmX = -100, cSmY = -100;
+const hc = document.getElementById('handCursor');
+
+function moveCursor(x, y, gesture) {
+  cSmX += (x - cSmX) * 0.3;
+  cSmY += (y - cSmY) * 0.3;
+  hc.style.left = cSmX + 'px';
+  hc.style.top = cSmY + 'px';
+
+  hc.className = '';
+  if (gesture === 'open') hc.classList.add('rotate');
+  else if (gesture === 'peace') hc.classList.add('zoom-cur');
+  else if (gesture === 'fist') hc.classList.add('explode-cur');
+}
+
+function hideCursor() {
+  hc.style.left = '-50px'; hc.style.top = '-50px';
+}
+
+// ── GESTURE UI ────────────────────────────────────────
+const GEST_NAMES = {
+  open: '🖐️ ROTANDO MODELO',
+  peace: '✌️ ZOOM ACTIVO',
+  point: '☝️ LUZ DIRECCIONAL',
+  fist: '✊ ENSAMBLE EXPLODIDO',
+  none: ''
+};
+
+function updateGestureUI(g) {
+  const tag = document.getElementById('gestureTag');
+  tag.textContent = GEST_NAMES[g] || '';
+  tag.classList.toggle('show', !!GEST_NAMES[g] && g !== 'none');
+  document.getElementById('gestureBadge').textContent = g !== 'none' ? g.toUpperCase() : 'EN ESPERA';
+
+  const chip = document.getElementById('camChip');
+  chip.textContent = GEST_NAMES[g] || '';
+  chip.classList.toggle('show', g !== 'none');
+
+  clearGestCards();
+  const map = { open:'g-open', peace:'g-peace', point:'g-point', fist:'g-fist' };
+  const colorMap = { open:'', peace:'green', point:'', fist:'red' };
+  if (map[g]) {
+    const el = document.getElementById(map[g]);
+    el.classList.add('active');
+    if (colorMap[g]) el.classList.add(colorMap[g]);
+  }
+}
+
+function clearGestCards() {
+  ['g-open','g-peace','g-point','g-fist'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','orange','green','red');
+  });
+}
+
+// ── CAM LANDMARKS ─────────────────────────────────────
+function drawCamLandmarks(lms) {
+  const W = camCanvas.width, H = camCanvas.height;
+  camCtx.save();
+  camCtx.scale(-1,1); camCtx.translate(-W,0);
+  const conns = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  camCtx.strokeStyle = 'rgba(0,212,255,0.5)'; camCtx.lineWidth = 1.5;
+  for (const [a,b] of conns) {
+    camCtx.beginPath();
+    camCtx.moveTo(lms[a].x*W, lms[a].y*H);
+    camCtx.lineTo(lms[b].x*W, lms[b].y*H);
+    camCtx.stroke();
+  }
+  [0,4,8,12,16,20].forEach(i => {
+    camCtx.beginPath();
+    camCtx.arc(lms[i].x*W, lms[i].y*H, 3,0,Math.PI*2);
+    camCtx.fillStyle = i===8 ? '#00d4ff' : 'rgba(255,255,255,0.6)';
+    camCtx.fill();
+  });
+  camCtx.restore();
+}
+
+// ── PART SELECTOR ─────────────────────────────────────
+function selectPart(name, btn) {
+  document.querySelectorAll('.part-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  currentPart = name;
+  targetRotX = 0.3; targetRotY = 0;
+  targetExplode = 0; explodeFactor = 0;
+  camZ = 5;
+  if (name === 'shaft') buildShaft();
+  else if (name === 'gear') buildGear();
+  else if (name === 'bracket') buildBracket();
+}
+</script>
+
+</body>
+</html>
